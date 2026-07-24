@@ -30,6 +30,10 @@ try:
     from typing import Unpack
 except ImportError:  # pragma: no cover - Python < 3.11
     from typing_extensions import Unpack
+try:
+    from typing import NotRequired, Required
+except ImportError:  # pragma: no cover - Python < 3.11
+    from typing_extensions import NotRequired, Required
 from typing import is_typeddict as _is_typeddict
 
 from pydantic import BaseModel
@@ -97,6 +101,20 @@ def _annotated_parts(annot: Any) -> tuple[Any, tuple[Any, ...]]:
     if meta is None:
         meta = tuple(args[1:]) if len(args) > 1 else ()
     return base, tuple(meta)
+
+
+def _strip_required_qualifier(tp: Any) -> tuple[Any, Optional[bool]]:
+    """Strip a top-level Required/NotRequired qualifier from a TypedDict annotation.
+
+    Return ``(inner_type, required)`` where ``required`` is True/False for an
+    explicit qualifier and None when no qualifier is present.
+    """
+    origin = get_origin(tp)
+    if origin is Required:
+        return get_args(tp)[0], True
+    if origin is NotRequired:
+        return get_args(tp)[0], False
+    return tp, None
 
 
 def _strip_optional(tp: Any) -> Any:
@@ -774,9 +792,16 @@ class SocketSpecAPI:
 
             ns = SocketSpec(identifier=cls._ns_identifier(), fields={})
             for name, ann in hints.items():
+                # Required/NotRequired qualifiers survive get_type_hints with
+                # include_extras=True. An explicit qualifier wins over
+                # __required_keys__, which cannot see qualifiers when the
+                # class was defined with stringified (future) annotations.
+                ann, qualifier_required = _strip_required_qualifier(ann)
                 child = cls._child_spec_from_type(ann)
+                if qualifier_required is None:
+                    qualifier_required = name in required_keys
                 child = replace(
-                    child, meta=replace(child.meta, required=name in required_keys)
+                    child, meta=replace(child.meta, required=qualifier_required)
                 )
                 ns.fields[name] = child
             return ns
