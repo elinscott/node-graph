@@ -27,13 +27,9 @@ from dataclasses import (
 from typing import Annotated, get_args, get_origin, get_type_hints
 
 try:
-    from typing import Unpack
+    from typing import Unpack, NotRequired, Required
 except ImportError:  # pragma: no cover - Python < 3.11
-    from typing_extensions import Unpack
-try:
-    from typing import NotRequired, Required
-except ImportError:  # pragma: no cover - Python < 3.11
-    from typing_extensions import NotRequired, Required
+    from typing_extensions import Unpack, NotRequired, Required
 from typing import is_typeddict as _is_typeddict
 
 from pydantic import BaseModel
