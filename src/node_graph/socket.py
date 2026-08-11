@@ -949,6 +949,9 @@ class TaskSocketNamespace(BaseSocket, OperatorSocketMixin):
         )
         #
         self._sockets: Dict[str, object] = {}
+        # True once a dict was explicitly assigned to this namespace, so an
+        # assigned-but-empty namespace survives ``_collect_values``.
+        self._explicitly_assigned: bool = False
         self._parent = parent
         self._SocketPool = None
         # one can specify the pool or entry_point to get the pool
@@ -1127,7 +1130,10 @@ class TaskSocketNamespace(BaseSocket, OperatorSocketMixin):
                 value = item._collect_values(
                     unwrap=unwrap, resolve=resolve, serialize=serialize
                 )
-                if value:
+                # An assigned-but-empty namespace must survive collection:
+                # dropping it turns a missing-member validation error into a
+                # missing-argument TypeError at the caller.
+                if value or item._explicitly_assigned:
                     data[name] = value
             else:
                 value = item.value if resolve else item._value
@@ -1432,6 +1438,7 @@ class TaskSocketNamespace(BaseSocket, OperatorSocketMixin):
                 ],
             )
 
+        self._explicitly_assigned = True
         for key, val in value.items():
             self._assign_key_value(key, val, value_source=value_source)
 
