@@ -1220,8 +1220,11 @@ class TaskSocketNamespace(BaseSocket, OperatorSocketMixin):
         """Collect the values held by this namespace's sockets.
 
         With ``tag_namespaces``, each namespace becomes a ``TaggedNamespace`` that
-        keeps a handle on its socket, and a required namespace is reported even
-        when none of its members were provided.
+        keeps a handle on its socket. An assigned-but-empty namespace still
+        survives collection (dropping it would turn a missing-member validation
+        error into a missing-argument ``TypeError`` at the caller); a namespace
+        that was never assigned at all does not, so an omitted required
+        namespace still reaches the caller as a missing argument.
         """
         data = TaggedNamespace(socket=self) if tag_namespaces else {}
         for name, item in self._sockets.items():
@@ -1232,15 +1235,7 @@ class TaskSocketNamespace(BaseSocket, OperatorSocketMixin):
                     serialize=serialize,
                     tag_namespaces=tag_namespaces,
                 )
-                keep_empty = (
-                    tag_namespaces
-                    and item._metadata.required
-                    and not item._metadata.extras.get("builtin_socket")
-                )
-                # An assigned-but-empty namespace must survive collection:
-                # dropping it turns a missing-member validation error into a
-                # missing-argument TypeError at the caller.
-                if value or item._explicitly_assigned or keep_empty:
+                if value or item._explicitly_assigned:
                     data[name] = value
             else:
                 value = item.value if resolve else item._value
