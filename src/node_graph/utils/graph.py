@@ -146,7 +146,7 @@ def _deserialize_inputs(namespace: Any, values: Any, adapter: Any) -> Any:
         return values
     from node_graph.utils.struct_utils import is_structured_instance
 
-    out = dict(values)
+    out = values.copy()
     for name, item in namespace._sockets.items():
         if name not in out:
             continue
@@ -206,7 +206,7 @@ def materialize_graph(
         inputs = clean_socket_reference(inputs)
         graph.graph_inputs.set_inputs(inputs)
         tag_socket_value(graph.inputs)
-        inputs = graph.inputs._collect_values(unwrap=False)
+        inputs = graph.inputs._collect_values(unwrap=False, tag_namespaces=True)
         inputs = coerce_inputs_from_spec(inputs, in_spec)
         inputs = _deserialize_inputs(
             graph.inputs, inputs, getattr(graph, "serialization", None)
