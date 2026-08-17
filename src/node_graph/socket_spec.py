@@ -531,6 +531,23 @@ def _is_struct_model_type(tp: Any) -> bool:
     )
 
 
+def _pydantic_field_is_required(model_field: Any) -> bool:
+    """True if a Pydantic field has neither a default nor a default factory."""
+    if getattr(model_field, "default", PydanticUndefined) is not PydanticUndefined:
+        return False
+    return getattr(model_field, "default_factory", None) is None
+
+
+def _dataclass_field_is_required(f: Any) -> bool:
+    """True if a dataclass field has neither a default nor a default factory."""
+    return f.default is _DC_MISSING and f.default_factory is _DC_MISSING
+
+
+def _as_optional(spec: SocketSpec) -> SocketSpec:
+    """Mark a spec as a socket the caller may leave unset."""
+    return replace(spec, meta=replace(spec.meta, required=False))
+
+
 def _struct_cfg(model_cls: type[Any]) -> dict:
     return getattr(model_cls, "model_config", {}) or {}
 
@@ -678,7 +695,7 @@ class SocketSpecAPI:
                         f"Default provided for namespace field '{name}'. "
                         "Provide a structured default via function signature mapping instead."
                     )
-                child = replace(child, default=default_val)
+                child = _as_optional(replace(child, default=default_val))
 
             new_fields[name] = child
 
@@ -763,6 +780,8 @@ class SocketSpecAPI:
                     child = cls._child_spec_from_type(
                         _pydantic_field_annotation(model_field)
                     )
+                    if not _pydantic_field_is_required(model_field):
+                        child = _as_optional(child)
                     if (
                         getattr(model_field, "default", PydanticUndefined)
                         is not PydanticUndefined
@@ -782,6 +801,8 @@ class SocketSpecAPI:
                 child = cls._child_spec_from_type(
                     _pydantic_field_annotation(model_field)
                 )
+                if not _pydantic_field_is_required(model_field):
+                    child = _as_optional(child)
                 if (
                     getattr(model_field, "default", PydanticUndefined)
                     is not PydanticUndefined
@@ -806,6 +827,9 @@ class SocketSpecAPI:
                     ann = hints.get(f.name, f.type)
                     child = cls._child_spec_from_type(ann)
 
+                    if not _dataclass_field_is_required(f):
+                        child = _as_optional(child)
+
                     # Apply scalar defaults (ignore default_factory to avoid unintended calls)
                     if f.default is not _DC_MISSING and not child.is_namespace():
                         child = replace(child, default=f.default)
@@ -823,6 +847,9 @@ class SocketSpecAPI:
             for f in _dc_fields(model_cls):
                 ann = hints.get(f.name, f.type)
                 child = cls._child_spec_from_type(ann)
+                if not _dataclass_field_is_required(f):
+                    child = _as_optional(child)
+                # Apply scalar defaults (ignore default_factory to avoid unintended calls)
                 if f.default is not _DC_MISSING and not child.is_namespace():
                     child = replace(child, default=f.default)
                 ns.fields[f.name] = child
@@ -1022,7 +1049,12 @@ class SocketSpecAPI:
     def _apply_structured_defaults_to_leaves(
         cls, ns_spec: SocketSpec, dv: dict[str, Any]
     ) -> SocketSpec:
-        """Recursively apply dict defaults by setting defaults on leaf specs only."""
+        """Recursively apply dict defaults by setting defaults on leaf specs only.
+
+        A leaf named by the mapping becomes optional; a namespace the mapping
+        descends into keeps its requiredness, since the mapping need not name
+        every field below it.
+        """
         if not ns_spec.is_namespace():
             return ns_spec
         new_fields: dict[str, SocketSpec] = {}
@@ -1038,7 +1070,7 @@ class SocketSpecAPI:
                     raise TypeError(
                         f"Default for '{k}' is scalar, but the field is a namespace."
                     )
-                new_fields[k] = replace(child, default=val)
+                new_fields[k] = _as_optional(replace(child, default=val))
         return replace(ns_spec, fields=new_fields)
 
     @classmethod
@@ -1490,6 +1522,12 @@ def _function_returns_value(func) -> bool:
 
 
 def _set_leaf_default(ns: SocketSpec, path: tuple[str, ...], value: Any) -> SocketSpec:
+    """Set (or, given MISSING, drop) the default of the leaf at ``path``.
+
+    Gaining a default makes the leaf optional; losing one makes it required
+    again. A leaf that had no default to lose keeps the requiredness it was
+    declared with.
+    """
     head, *rest = path
     child = ns.fields[head]
     if rest:
@@ -1500,7 +1538,12 @@ def _set_leaf_default(ns: SocketSpec, path: tuple[str, ...], value: Any) -> Sock
         )
     if child.is_namespace():
         raise TypeError("Cannot set default on a namespace.")
-    return replace(ns, fields={**ns.fields, head: replace(child, default=value)})
+    new_child = replace(child, default=value)
+    if not isinstance(value, type(MISSING)):
+        new_child = _as_optional(new_child)
+    elif child.has_default():
+        new_child = replace(new_child, meta=replace(new_child.meta, required=True))
+    return replace(ns, fields={**ns.fields, head: new_child})
 
 
 def set_default(spec: SocketSpec | SocketView, dotted: str, value: Any) -> SocketSpec:
